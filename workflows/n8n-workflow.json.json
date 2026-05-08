@@ -1,0 +1,1550 @@
+{
+  "name": "Kobo Listener - mel_pipeline",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1840,
+        448
+      ],
+      "id": "f70f924d-5cf1-491c-a16f-e2b8041403b8",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "url": "https://kf.kobotoolbox.org/api/v2/assets/aDnKb8qSSsGcZW64Vgo2nw/data/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token 3c74274419c6aff79ce4bd7f6aee7424f81aca3c"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1072,
+        48
+      ],
+      "id": "30751b60-7a0c-4cc2-a272-4ddd88eacbbc",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $json.body ?? $json;\n\n// ----------------------\n// SAFE HELPER\n// ----------------------\nconst safe = (v) =>\n  Array.isArray(v) ? v.join(\" \") : (v ?? \"\");\n\n// ----------------------\n// GPS HANDLING\n// ----------------------\nlet gpsRaw = safe(data[\"gps_location\"] || data[\"_geolocation\"]);\n\nconst gpsParts = gpsRaw ? gpsRaw.split(\" \") : [];\n\n// ----------------------\n// COPING FIX (IMPORTANT FIX)\n// ----------------------\nconst copingMap = {\n  skip: \"skip_days\",\n  skip_days: \"skip_days\",\n  reduce_meals: \"reduce_meals\",\n  borrow_food: \"borrow_food\",\n  sell_asserts: \"sell_assets\",\n  sell_assets: \"sell_assets\"\n};\n\nconst copingRaw = safe(data[\"coping/coping_001\"]).toLowerCase();\nconst coping_strategy = copingMap[copingRaw] || copingRaw;\n\n// ----------------------\n// OUTPUT CLEAN DATA\n// ----------------------\nreturn [\n  {\n    json: {\n      // CORE\n      name: safe(data[\"household_info/respondent_name\"]),\n      age: Number(data[\"demographics/age\"] || 0),\n      gender: safe(data[\"demographics/gender\"]),\n      income: Number(data[\"economic/monthly_income\"] || 0),\n      household_size: Number(data[\"household_info/household_size\"] || 0),\n\n      // FOOD\n      meals_skipped: Number(data[\"food_security/meals_skipped\"] || 0),\n      food_source: safe(data[\"food_security/food_source\"]),\n\n      // COPING (FIXED)\n      coping_strategy,\n\n      // WATER\n      water_source: safe(data[\"water/water_source\"]),\n      water_time: Number(data[\"water/water_time\"] || 0),\n\n      // FIELD\n      enumerator_name: safe(data[\"enumerator_name\"]),\n      gps_location_raw: gpsRaw,\n      latitude: Number(gpsParts[0] || 0),\n      longitude: Number(gpsParts[1] || 0),\n      altitude: Number(gpsParts[2] || 0),\n      accuracy: Number(gpsParts[3] || 0),\n      consent: safe(data[\"consent_section/consent\"]),\n      date: safe(data[\"date\"]),\n\n      // META (IMPORTANT FOR BACKFILL + DEDUP)\n      kobo_id: data[\"_id\"] || \"\",\n      uuid: data[\"_uuid\"] || \"\",\n      instance_id: data[\"meta/instanceID\"] || \"\",\n      submitted_by: data[\"_submitted_by\"] || \"\",\n      submission_time: data[\"_submission_time\"] || \"\"\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -784,
+        992
+      ],
+      "id": "5b9ed52a-288c-463f-9cb2-e742903a6d9b",
+      "name": "Clean & Normalize Kobo Data"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "kobo-collect",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1840,
+        1056
+      ],
+      "id": "f92eadc6-9a01-4d13-93d7-304bc4fe67e7",
+      "name": "Live Submissions",
+      "webhookId": "bda8ce69-0b9e-4d63-9d26-c3c5591fc050"
+    },
+    {
+      "parameters": {
+        "jsCode": "let score = 0;\n\nconst income = Number($json.income || 0);\nif (income < 5000) score += 3;\nelse if (income < 10000) score += 2;\nelse if (income < 20000) score += 1;\n\nconst coping = ($json.coping_strategy || \"\").toLowerCase();\n\nif (\n  coping.includes(\"skip\") ||\n  coping.includes(\"reduce\") ||\n  coping.includes(\"whole\")\n) score += 3;\nelse if (coping.includes(\"borrow\")) score += 2;\nelse if (coping.includes(\"sell\")) score += 2;\n\nconst food = ($json.food_source || \"\").toLowerCase();\nif (food.includes(\"aid\")) score += 3;\nelse if (food.includes(\"market\")) score += 1;\n\nconst meals = Number($json.meals_skipped || 0);\nif (meals >= 5) score += 3;\nelse if (meals >= 3) score += 2;\nelse if (meals >= 1) score += 1;\n\nconst waterTime = Number($json.water_time || 0);\nif (waterTime > 120) score += 2;\nelse if (waterTime > 60) score += 1;\n\nif (score > 10) score = 10;\n\nconst classification =\n  score <= 4 ? \"Food Secure\" :\n  score <= 7 ? \"Moderate Risk\" :\n  \"Severe Insecurity\";\n\nreturn [\n  {\n    json: {\n      ...$json,\n      food_security_score: score,\n      food_security_class: classification\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -304,
+        992
+      ],
+      "id": "fa51544c-1bf4-4614-8986-9fab2cc02fb7",
+      "name": "Food Security Scoring Engine"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1dI8wyYVYmhYqapiSxKh2Z6TfxUP8lpgYzY4fLLk-43c",
+          "mode": "list",
+          "cachedResultName": "kobo_data",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1dI8wyYVYmhYqapiSxKh2Z6TfxUP8lpgYzY4fLLk-43c/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1dI8wyYVYmhYqapiSxKh2Z6TfxUP8lpgYzY4fLLk-43c/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "age",
+              "displayName": "age",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gender",
+              "displayName": "gender",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "household_size",
+              "displayName": "household_size",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "income",
+              "displayName": "income",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "food_source",
+              "displayName": "food_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "coping_strategy",
+              "displayName": "coping_strategy",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "water_source",
+              "displayName": "water_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "water_time",
+              "displayName": "water_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "enumerator_name",
+              "displayName": "enumerator_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "consent",
+              "displayName": "consent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "submission_time",
+              "displayName": "submission_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "submitted_by",
+              "displayName": "submitted_by",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "kobo_id",
+              "displayName": "kobo_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "uuid",
+              "displayName": "uuid",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "instance_id",
+              "displayName": "instance_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "food_security_score",
+              "displayName": "food_security_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "food_security_class",
+              "displayName": "food_security_class",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "meals_skipped",
+              "displayName": "meals_skipped",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gps_location_raw",
+              "displayName": "gps_location_raw",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "latitude",
+              "displayName": "latitude",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "longitude",
+              "displayName": "longitude",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "altitude",
+              "displayName": "altitude",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "accuracy",
+              "displayName": "accuracy",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        256,
+        672
+      ],
+      "id": "4b7fe692-1711-4222-883c-48f9fdcea490",
+      "name": "Kobo Data",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "gFs0zXo2tf9QMv29",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "from": "+14155238886",
+        "to": "+34632997077",
+        "toWhatsapp": true,
+        "message": "=🚨 FOOD SECURITY ALERT\n\n📍 Household ID: {{$node[\"Food Security Scoring Engine\"].json[\"kobo_id\"]}}\n👤 Respondent: {{$node[\"Food Security Scoring Engine\"].json[\"name\"]}}\n\n━━━━━━━━━━━━━━\n📊 RISK SUMMARY\nScore: {{$node[\"Food Security Scoring Engine\"].json[\"food_security_score\"]}}\nLevel: {{$node[\"Food Security Scoring Engine\"].json[\"food_security_class\"]}}\n━━━━━━━━━━━━━━\n\n🍽️ Meals Skipped: {{$node[\"Food Security Scoring Engine\"].json[\"meals_skipped\"]}}\n💰 Income (KES): {{$node[\"Food Security Scoring Engine\"].json[\"income\"]}}\n\n⚠️ Coping Strategies:\n{{$node[\"Food Security Scoring Engine\"].json[\"coping_strategy\"]}}\n\n🚰 Water Source: {{$node[\"Food Security Scoring Engine\"].json[\"water_source\"]}}\n⏱️ Water Time: {{$node[\"Food Security Scoring Engine\"].json[\"water_time\"]}} mins\n\n━━━━━━━━━━━━━━\n🚑 ACTION REQUIRED\nImmediate follow-up recommended for {{$node[\"Food Security Scoring Engine\"].json[\"food_security_class\"]}} household.",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        864,
+        1712
+      ],
+      "id": "41c43367-0ccb-4f0c-a3a1-74e2cdef6fc0",
+      "name": "Send an SMS/MMS/WhatsApp message",
+      "retryOnFail": true,
+      "credentials": {
+        "twilioApi": {
+          "id": "N2nWyY18uZ4Q3sfr",
+          "name": "Twilio account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f4681110-10e3-48f5-afaf-13af71e497e2",
+              "leftValue": "={{ $('Food Security Scoring Engine').item.json.food_security_score }}",
+              "rightValue": 8,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -160,
+        1728
+      ],
+      "id": "fd5b719e-809e-4d43-954d-5167afaee617",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a5ae427d-2c25-4fce-afbc-9e70417e55a6",
+              "name": "clean_class ",
+              "value": "={{$json.food_security_class.toLowerCase().trim()}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        144,
+        1312
+      ],
+      "id": "b5192611-a0d6-4a7c-93f3-5d14eacc7119",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM  food_security_submissions;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1504,
+        112
+      ],
+      "id": "25d4bca3-c6d0-4814-8174-3c89ad271a2b",
+      "name": "Execute a SQL query1",
+      "credentials": {
+        "postgres": {
+          "id": "RtKfCdw6Cr2IH5BT",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "food_security_submissions",
+          "mode": "list",
+          "cachedResultName": "food_security_submissions"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {
+            "id": 0,
+            "age": 0,
+            "income": 0,
+            "household_size": 0,
+            "meals_skipped": 0,
+            "water_time": 0,
+            "food_security_score": 0
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "kobo_id",
+              "displayName": "kobo_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "age",
+              "displayName": "age",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gender",
+              "displayName": "gender",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "income",
+              "displayName": "income",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "household_size",
+              "displayName": "household_size",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "meals_skipped",
+              "displayName": "meals_skipped",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "food_source",
+              "displayName": "food_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "coping_strategy",
+              "displayName": "coping_strategy",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "water_source",
+              "displayName": "water_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "water_time",
+              "displayName": "water_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "food_security_score",
+              "displayName": "food_security_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "food_security_class",
+              "displayName": "food_security_class",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "latitude",
+              "displayName": "latitude",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "longitude",
+              "displayName": "longitude",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "submission_time",
+              "displayName": "submission_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        880,
+        976
+      ],
+      "id": "3453af87-4287-4f9b-b4b7-c9b568730bb1",
+      "name": "Insert rows in a table",
+      "retryOnFail": true,
+      "credentials": {
+        "postgres": {
+          "id": "RtKfCdw6Cr2IH5BT",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "kobo_raw_submissions",
+          "mode": "list",
+          "cachedResultName": "kobo_raw_submissions"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "raw_data": "={{$json}}",
+            "received_at": "={{$now}}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "raw_data",
+              "displayName": "raw_data",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "object",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "received_at",
+              "displayName": "received_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -464,
+        0
+      ],
+      "id": "c85e6413-8991-4b41-a76f-e62daaea9d77",
+      "name": "Insert rows in a table1",
+      "retryOnFail": true,
+      "credentials": {
+        "postgres": {
+          "id": "RtKfCdw6Cr2IH5BT",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\n// ----------------------\n// SAFE HELPER\n// ----------------------\nconst safe = (v) =>\n  Array.isArray(v) ? v.join(\" \") : (v ?? \"\");\n\n// ----------------------\n// COPING MAP\n// ----------------------\nconst copingMap = {\n  skip: \"skip_days\",\n  skip_days: \"skip_days\",\n  reduce_meals: \"reduce_meals\",\n  borrow_food: \"borrow_food\",\n  sell_asserts: \"sell_assets\",\n  sell_assets: \"sell_assets\"\n};\n\n// ----------------------\n// PROCESS ALL ITEMS\n// ----------------------\nreturn items.map(({ json: data }) => {\n\n  let gpsRaw = safe(data[\"gps_location\"] || data[\"_geolocation\"]);\n  const gpsParts = gpsRaw ? gpsRaw.split(\" \") : [];\n\n  const copingRaw = safe(data[\"coping/coping_001\"]).toLowerCase();\n  const coping_strategy = copingMap[copingRaw] || copingRaw;\n\n  return {\n    json: {\n      // CORE\n      name: safe(data[\"household_info/respondent_name\"]),\n      age: Number(data[\"demographics/age\"] || 0),\n      gender: safe(data[\"demographics/gender\"]),\n      income: Number(data[\"economic/monthly_income\"] || 0),\n      household_size: Number(data[\"household_info/household_size\"] || 0),\n\n      // FOOD\n      meals_skipped: Number(data[\"food_security/meals_skipped\"] || 0),\n      food_source: safe(data[\"food_security/food_source\"]),\n\n      // COPING\n      coping_strategy,\n\n      // WATER\n      water_source: safe(data[\"water/water_source\"]),\n      water_time: Number(data[\"water/water_time\"] || 0),\n\n      // FIELD\n      enumerator_name: safe(data[\"enumerator_name\"]),\n      gps_location_raw: gpsRaw,\n      latitude: Number(gpsParts[0] || 0),\n      longitude: Number(gpsParts[1] || 0),\n      altitude: Number(gpsParts[2] || 0),\n      accuracy: Number(gpsParts[3] || 0),\n      consent: safe(data[\"consent_section/consent\"]),\n      date: safe(data[\"date\"]),\n\n      // META\n      kobo_id: data[\"_id\"] || \"\",\n      uuid: data[\"_uuid\"] || \"\",\n      instance_id: data[\"meta/instanceID\"] || \"\",\n      submitted_by: data[\"_submitted_by\"] || \"\",\n      submission_time: data[\"_submission_time\"] || \"\"\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -848,
+        624
+      ],
+      "id": "ac6ea2d0-4ae1-4224-b51e-187dbe9ded94",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst safe = (v) =>\n  v === null || v === undefined ? \"\" : String(v).toLowerCase().trim();\n\nconst num = (v) => {\n  const n = Number(v);\n  return isNaN(n) ? 0 : n;\n};\n\nreturn items.map(({ json }) => {\n\n  let score = 0;\n\n  const income = num(json[\"economic/monthly_income\"]);\n  const meals = num(json[\"food_security/meals_skipped\"]);\n  const waterTime = num(json[\"water/water_time\"]);\n\n  const coping = safe(json[\"coping/coping_001\"]);\n  const food = safe(json[\"food_security/food_source\"]);\n  const water = safe(json[\"water/water_source\"]);\n  const employment = safe(json[\"economic/employment_status\"]);\n\n  // ----------------------\n  // SCORING\n  // ----------------------\n  if (income <= 3000) score += 4;\n  else if (income < 5000) score += 3;\n  else if (income < 10000) score += 2;\n  else if (income < 20000) score += 1;\n\n  if (coping.includes(\"skip\") || coping.includes(\"reduce\")) score += 3;\n\n  if (food.includes(\"aid\") || food.includes(\"borrowing\")) score += 3;\n\n  if (meals >= 5) score += 4;\n  else if (meals >= 3) score += 3;\n  else if (meals >= 1) score += 1;\n\n  if (waterTime > 180) score += 3;\n  else if (waterTime > 120) score += 2;\n  else if (waterTime > 60) score += 1;\n\n  if (water.includes(\"river\") || water.includes(\"dam\") || water.includes(\"pond\")) {\n    score += 1;\n  }\n\n  if (employment.includes(\"unemployed\") || employment.includes(\"casual\")) {\n    score += 1;\n  }\n\n  if (score > 10) score = 10;\n\n  let classification = \"Food Secure\";\n  if (score >= 8) classification = \"Severe Insecurity\";\n  else if (score >= 5) classification = \"Moderate Risk\";\n\n  return {\n    json: {\n      ...json,\n      food_security_score: score,\n      food_security_class: classification,\n      scored_at: new Date().toISOString()\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        448
+      ],
+      "id": "3bcb726b-0948-446e-b939-26d443a97870",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1dI8wyYVYmhYqapiSxKh2Z6TfxUP8lpgYzY4fLLk-43c",
+          "mode": "list",
+          "cachedResultName": "kobo_data",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1dI8wyYVYmhYqapiSxKh2Z6TfxUP8lpgYzY4fLLk-43c/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1dI8wyYVYmhYqapiSxKh2Z6TfxUP8lpgYzY4fLLk-43c/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "age",
+              "displayName": "age",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gender",
+              "displayName": "gender",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "household_size",
+              "displayName": "household_size",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "income",
+              "displayName": "income",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "food_source",
+              "displayName": "food_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "coping_strategy",
+              "displayName": "coping_strategy",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "water_source",
+              "displayName": "water_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "water_time",
+              "displayName": "water_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "enumerator_name",
+              "displayName": "enumerator_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "consent",
+              "displayName": "consent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "submission_time",
+              "displayName": "submission_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "submitted_by",
+              "displayName": "submitted_by",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "kobo_id",
+              "displayName": "kobo_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "uuid",
+              "displayName": "uuid",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "instance_id",
+              "displayName": "instance_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "food_security_score",
+              "displayName": "food_security_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "food_security_class",
+              "displayName": "food_security_class",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "meals_skipped",
+              "displayName": "meals_skipped",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gps_location_raw",
+              "displayName": "gps_location_raw",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "latitude",
+              "displayName": "latitude",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "longitude",
+              "displayName": "longitude",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "altitude",
+              "displayName": "altitude",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "accuracy",
+              "displayName": "accuracy",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        320,
+        32
+      ],
+      "id": "536f0c30-5ddf-4c50-b46e-865285fddae5",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "gFs0zXo2tf9QMv29",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "food_security_submissions",
+          "mode": "list",
+          "cachedResultName": "food_security_submissions"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {
+            "id": 0,
+            "age": 0,
+            "income": 0,
+            "household_size": 0,
+            "meals_skipped": 0,
+            "water_time": 0,
+            "food_security_score": 0
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "kobo_id",
+              "displayName": "kobo_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "age",
+              "displayName": "age",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gender",
+              "displayName": "gender",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "income",
+              "displayName": "income",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "household_size",
+              "displayName": "household_size",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "meals_skipped",
+              "displayName": "meals_skipped",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "food_source",
+              "displayName": "food_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "coping_strategy",
+              "displayName": "coping_strategy",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "water_source",
+              "displayName": "water_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "water_time",
+              "displayName": "water_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "food_security_score",
+              "displayName": "food_security_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "food_security_class",
+              "displayName": "food_security_class",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "latitude",
+              "displayName": "latitude",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "longitude",
+              "displayName": "longitude",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "submission_time",
+              "displayName": "submission_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "enumerator_name",
+              "displayName": "enumerator_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gps_location_raw",
+              "displayName": "gps_location_raw",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "altitude",
+              "displayName": "altitude",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "accuracy",
+              "displayName": "accuracy",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "consent",
+              "displayName": "consent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "uuid",
+              "displayName": "uuid",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "instance_id",
+              "displayName": "instance_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "submitted_by",
+              "displayName": "submitted_by",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        816,
+        304
+      ],
+      "id": "089ea44e-b87a-4430-86ac-f52109d157f2",
+      "name": "Insert rows in a table2",
+      "retryOnFail": true,
+      "credentials": {
+        "postgres": {
+          "id": "RtKfCdw6Cr2IH5BT",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $json.results || [];\n\nreturn results.map(r => ({\n  json: r\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -912,
+        288
+      ],
+      "id": "46914dcc-74ba-4cd0-bc17-56c2ea6a07ea",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "kobo_raw_submissions",
+          "mode": "list",
+          "cachedResultName": "kobo_raw_submissions"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "raw_data": "={{$json}}",
+            "received_at": "={{$now}}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "raw_data",
+              "displayName": "raw_data",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "object",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "received_at",
+              "displayName": "received_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -864,
+        1552
+      ],
+      "id": "48567cbe-8f61-4e23-8223-8f0f53ae4845",
+      "name": "Insert rows in a table3",
+      "credentials": {
+        "postgres": {
+          "id": "RtKfCdw6Cr2IH5BT",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean & Normalize Kobo Data": {
+      "main": [
+        [
+          {
+            "node": "Food Security Scoring Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Live Submissions": {
+      "main": [
+        [
+          {
+            "node": "Clean & Normalize Kobo Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Insert rows in a table3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Food Security Scoring Engine": {
+      "main": [
+        [
+          {
+            "node": "Kobo Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Insert rows in a table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Send an SMS/MMS/WhatsApp message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert rows in a table": {
+      "main": [
+        []
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Insert rows in a table2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Insert rows in a table1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "2f28b79c-6974-476d-ae58-4b411ad39529",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "64f2c2007f44733f5336d23b0460476211d0138f16ec3971463f458e53268eb0"
+  },
+  "id": "tEBIN267P7yaYHWR",
+  "tags": []
+}

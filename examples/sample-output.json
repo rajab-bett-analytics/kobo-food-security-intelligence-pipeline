@@ -1,0 +1,27 @@
+[
+  {
+    "name": "Poulo Rotich",
+    "age": 52,
+    "gender": "male",
+    "income": 8000,
+    "household_size": 9,
+    "meals_skipped": 3,
+    "food_source": "market",
+    "coping_strategy": "skip_days",
+    "water_source": "river",
+    "water_time": 75,
+    "enumerator_name": "Shuck Lujan",
+    "gps_location_raw": "-1.3018693 36.8918346 1615.0 16.142",
+    "latitude": -1.3018693,
+    "longitude": 36.8918346,
+    "altitude": 1615,
+    "accuracy": 16.142,
+    "consent": "yes",
+    "date": "2026-05-08",
+    "kobo_id": 746598259,
+    "uuid": "13252925-9a1c-4e0f-98ae-28c83ca2ab0b",
+    "instance_id": "uuid:13252925-9a1c-4e0f-98ae-28c83ca2ab0b",
+    "submitted_by": "rajab027",
+    "submission_time": "2026-05-08T13:13:55"
+  }
+]
