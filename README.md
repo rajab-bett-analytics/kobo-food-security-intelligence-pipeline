@@ -63,8 +63,13 @@ This enables fully automated continuous field-data processing without manual ana
 graph TD
     A[KoboToolbox XLSForm Survey Submission]
     A --> B[n8n Workflow Automation - Render Hosted]
+
+    B --> R[(Raw Data Storage Layer - Unprocessed Kobo Submissions)]
+
     B --> C[Validation & Data Normalization Layer]
+
     C --> D[Household Vulnerability Scoring Engine]
+
     D --> E[(PostgreSQL Intelligence Database)]
     D --> F[Google Sheets Operational Dashboard]
     D --> G[Automated WhatsApp/SMS Escalation Alerts]
