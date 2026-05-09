@@ -1,180 +1,275 @@
-````markdown
 # Kobo Food Security Intelligence Pipeline
 
-Production-grade humanitarian data engineering and automation system (Hosted on Render)
+**Production-Grade Humanitarian Data Engineering System for Real-Time Food Security Monitoring, Automated Risk Classification, and Operational Response Intelligence**
 
 ---
 
-## Project Overview
+## Humanitarian Context
 
-In humanitarian response settings, delays between data collection and decision-making can directly affect the ability to respond to food insecurity and emergency needs.
+In humanitarian operations, the speed at which field assessment data is transformed into actionable intelligence directly determines response effectiveness.
 
-This project automates the transformation of household-level food security survey data collected through KoboToolbox into actionable intelligence for operational decision-making.
+Delayed reporting, fragmented spreadsheets, inconsistent field submissions, and manual analysis often create operational blind spots that prevent rapid identification of vulnerable households experiencing food insecurity.
 
-The pipeline ingests field assessments, cleans and standardizes inconsistent survey data, calculates household vulnerability scores, stores structured datasets in PostgreSQL, synchronizes reporting outputs to Google Sheets, and triggers automated alerts for high-risk households through WhatsApp or SMS.
-
-The system is designed to support near real-time food security monitoring and improve response speed in humanitarian operations.
+This project was designed to solve that challenge by building an end-to-end automated humanitarian intelligence pipeline that converts raw KoboToolbox field submissions into structured operational insights for rapid response decision-making.
 
 ---
 
-## Deployment (Hosted on Render)
+# Project Scope
 
-The system is deployed on Render, providing a stable cloud environment for continuous data processing and workflow execution.
+This system was fully designed and engineered as a complete humanitarian data workflow, including:
 
-### Why Render
+### Survey Instrument Design
 
-Hosting the system on Render ensures:
+Designed and deployed structured **XLSForm-based food security survey tools** in KoboToolbox to capture:
 
-- Continuous processing of incoming survey submissions without manual intervention  
-- Reliable cloud-based PostgreSQL storage for long-term data retention and analysis  
-- Scalable processing for high-volume field data during emergency or rapid assessments  
-- High availability to ensure alerts and workflows are not interrupted  
+- Household demographic indicators
+- Food consumption patterns
+- Water access conditions
+- Livelihood resilience indicators
+- Coping strategy behaviors
+- Geographic and enumerator metadata
 
----
+The survey architecture was structured to ensure:
 
-## Humanitarian Context and Problem Statement
-
-Humanitarian organizations often face operational challenges such as:
-
-- Slow turnaround time between field data collection and reporting  
-- Heavy reliance on manual spreadsheet-based workflows  
-- Inconsistent or incomplete field data from enumerators  
-- Limited visibility into vulnerable households in real time  
-- Lack of automated escalation mechanisms for critical cases  
-
-These gaps delay intervention and reduce the effectiveness of food security response programs.
+- Data quality validation at point-of-entry
+- Reduced enumerator error rates
+- Consistent response normalization
+- Scalable deployment across field teams
 
 ---
 
-## Solution Approach
+### Workflow Automation Architecture
 
-This pipeline introduces an automated data-to-decision system that:
+Built and deployed a production workflow orchestration layer using **n8n**, hosted on **Render**, to automate the full assessment-to-intelligence pipeline.
 
-- Collects survey data directly from KoboToolbox  
-- Standardizes and cleans raw field inputs  
-- Applies a structured vulnerability scoring model  
-- Identifies households at risk of food insecurity  
-- Produces structured datasets for reporting and analysis  
-- Triggers alerts for urgent humanitarian response  
+The workflow:
 
-The system reduces dependency on manual processing and improves the speed and consistency of decision-making.
+- Listens for new KoboToolbox submissions
+- Retrieves raw nested survey payloads via API
+- Cleans and validates incoming records
+- Normalizes inconsistent field structures
+- Computes household vulnerability scores
+- Writes structured records to PostgreSQL
+- Synchronizes operational reporting to Google Sheets
+- Triggers automated WhatsApp/SMS alerts for critical cases
+
+This enables fully automated continuous field-data processing without manual analyst intervention.
 
 ---
 
-## System Architecture
+# System Architecture
 
 ```mermaid
 graph TD
-    A[KoboToolbox Field Data] --> B[n8n Workflow (Render)]
-    B --> C[Data Cleaning and Normalization]
-    C --> D[Household Risk Scoring Engine]
-    D --> E[(PostgreSQL Database)]
-    D --> F[Google Sheets Reporting]
-    D --> G[WhatsApp / SMS Alert System]
-````
-
----
-
-## Technology Stack
-
-* Workflow Orchestration: n8n
-* Cloud Hosting: Render
-* Data Source: KoboToolbox API v2
-* Processing Logic: JavaScript (Node.js)
-* Database: PostgreSQL (Cloud Hosted)
-* Reporting: Google Sheets API
-* Alerting: WhatsApp / SMS APIs
-
----
-
-## Key Capabilities
-
-### Automated Data Processing
-
-Eliminates manual handling of survey submissions by fully automating ingestion and transformation.
-
-### Data Standardization
-
-Handles real-world field data issues such as:
-
-* Inconsistent GPS formats
-* Missing or incomplete responses
-* Non-standardized categorical inputs
-
-### Vulnerability Scoring System
-
-Each household is assigned a food security risk score based on key indicators including:
-
-* Meal consumption patterns
-* Coping strategies
-* Water access
-* Income stability
-
-### Risk Classification Framework
-
-| Score Range | Classification                           |
-| ----------- | ---------------------------------------- |
-| 0–4         | Food Secure                              |
-| 5–7         | Moderate Risk                            |
-| 8+          | Severe Food Insecurity (Alert Triggered) |
-
----
-
-## Engineering Considerations
-
-### 1. Field Data Structure Handling
-
-KoboToolbox responses are nested and require transformation before per-household processing. A normalization layer restructures incoming data into processable records.
-
-### 2. Batch Processing at Scale
-
-The scoring engine is designed to process multiple submissions simultaneously, ensuring stability during high-volume data collection periods.
-
-### 3. Data Quality and Normalization
-
-Field data collected in real environments is often inconsistent. The system standardizes:
-
-* Geographic coordinates
-* Categorical responses
-* Missing or partial fields
-
----
-
-## Data Architecture
-
-### Raw Data Layer
-
-Stores original KoboToolbox submissions in their native format to ensure traceability, auditing, and data integrity.
-
-### Processed Data Layer
-
-Stores cleaned and structured records including:
-
-* Vulnerability scores
-* Standardized indicators
-* Geographic metadata
-* Analysis-ready datasets for reporting and dashboards
-
----
-
-## System Architecture Diagram
-
-```mermaid
-graph TD
-    A[KoboToolbox Field Data] --> B[n8n Workflow (Render)]
-    B --> C[Data Cleaning and Normalization]
-    C --> D[Household Risk Scoring Engine]
-    D --> E[(PostgreSQL Database)]
-    D --> F[Google Sheets Reporting]
-    D --> G[WhatsApp / SMS Alert System]
+    A[KoboToolbox XLSForm Survey Submission]
+    A --> B[n8n Workflow Automation - Render Hosted]
+    B --> C[Validation & Data Normalization Layer]
+    C --> D[Household Vulnerability Scoring Engine]
+    D --> E[(PostgreSQL Intelligence Database)]
+    D --> F[Google Sheets Operational Dashboard]
+    D --> G[Automated WhatsApp/SMS Escalation Alerts]
 ```
 
 ---
 
-## Repository Structure
+# Workflow Automation (n8n)
+
+![Workflow](docs/images/n8n-workflow.png)
+
+The workflow orchestration handles:
+
+- API ingestion scheduling
+- Error handling
+- Data transformation pipelines
+- Conditional branching
+- Alert escalation logic
+- Retry resilience
+- Database synchronization
+
+Hosted continuously on Render for high-availability processing.
+
+---
+
+# KoboToolbox Survey Design
+
+The food security assessment tool was engineered using structured XLSForm logic to support:
+
+- Enumerator validation constraints
+- Mandatory response enforcement
+- Conditional skip logic
+- Metadata integrity capture
+- Geographic consistency controls
+
+This ensures field data enters the system in operationally usable format.
+
+---
+
+# Raw Kobo Submission Payload
+
+![Input JSON](docs/images/input-json.png)
+
+Incoming nested JSON records contain:
+
+- Submission timestamps
+- Enumerator metadata
+- Household attributes
+- Survey response blocks
+- GPS coordinates
+- Device metadata
+
+These are transformed into analytics-ready structured records.
+
+---
+
+# Processed Intelligence Output
+
+![Output JSON](docs/images/output-json.png)
+
+After transformation, records contain:
+
+- Clean normalized schema
+- Derived household indicators
+- Computed vulnerability scores
+- Classification labels
+- Escalation flags
+- Reporting-ready output structure
+
+---
+
+# Vulnerability Scoring Framework
+
+The scoring engine evaluates household food-security risk using weighted indicators including:
+
+- Food consumption adequacy
+- Household coping strategies
+- Water accessibility
+- Income stability
+- Resource depletion signals
+
+### Classification Logic
+
+| Score Range | Classification |
+|------------|---------------|
+| 0–4 | Food Secure |
+| 5–7 | Moderate Risk |
+| 8+ | Severe Food Insecurity *(Automatic Alert Triggered)* |
+
+---
+
+# Automated Alert Escalation
+
+![WhatsApp Alert](docs/images/whatsapp-alert.png)
+
+When severe vulnerability thresholds are exceeded, the system automatically generates escalation alerts containing:
+
+- Household identifier
+- Vulnerability classification
+- Geographic location
+- Timestamp
+- Recommended operational follow-up
+
+This supports immediate field coordination and targeted humanitarian intervention.
+
+---
+
+# Operational Reporting Dashboard
+
+![Google Sheets Dashboard](docs/images/google-sheets.png)
+
+Google Sheets synchronization enables live reporting visibility for operations teams.
+
+Tracks:
+
+- Submission flow monitoring
+- Geographic risk distribution
+- Household-level vulnerability tracking
+- Field activity auditing
+- Programmatic trend analysis
+
+---
+
+# Intelligence Database Layer
+
+![Database Records](docs/images/database-records.png)
+
+Structured PostgreSQL storage supports:
+
+- Historical longitudinal analysis
+- Reporting automation
+- Data integrity auditing
+- Dashboard integrations
+- Future predictive analytics modeling
+
+---
+
+# Technology Stack
+
+**Field Data Collection**
+
+- KoboToolbox
+- XLSForm Survey Design
+
+**Workflow Automation**
+
+- n8n
+
+**Cloud Infrastructure**
+
+- Render
+
+**Processing Engine**
+
+- JavaScript (Node.js)
+
+**Database**
+
+- PostgreSQL
+
+**Reporting Layer**
+
+- Google Sheets API
+
+**Alerting Layer**
+
+- WhatsApp / SMS APIs
+
+---
+
+# Engineering Challenges Solved
+
+## 1. Nested Kobo JSON Transformation
+
+Built normalization logic to flatten deeply nested Kobo payload structures into analytics-ready schema.
+
+---
+
+## 2. Field Data Quality Enforcement
+
+Implemented:
+
+- Null handling
+- GPS correction
+- Category standardization
+- Missing-response remediation
+
+---
+
+## 3. High-Volume Submission Processing
+
+Designed scalable batch-safe ingestion to handle rapid assessment surges.
+
+---
+
+## 4. Automated Humanitarian Escalation Logic
+
+Configured conditional alert routing for critical food insecurity cases.
+
+---
+
+# Repository Structure
 
 ```plaintext
-kobo-food-security-pipeline/
+kobo-food-security-intelligence-pipeline/
 │
 ├── workflows/
 │   ├── n8n-workflow.json
@@ -185,9 +280,7 @@ kobo-food-security-pipeline/
 │   ├── raw_tables.sql
 │   └── analytics_queries.sql
 │
-├── docs/
-│   ├── architecture/
-│   └── images/
+├── docs/images/
 │
 └── examples/
     ├── sample-submission.json
@@ -196,61 +289,47 @@ kobo-food-security-pipeline/
 
 ---
 
-## Setup Instructions
+# Operational Impact
 
-### 1. Clone Repository
+This system enables humanitarian teams to:
 
-```bash
-git clone https://github.com/rajab-bett-analytics/kobo-food-security-pipeline.git
-```
-
----
-
-### 2. Deploy Workflow
-
-Import the n8n workflow:
-
-```
-/workflows/n8n-workflow.json
-```
-
-into an n8n instance hosted on Render.
+- Reduce reporting delays from days to minutes
+- Detect high-risk households faster
+- Improve intervention targeting
+- Increase field-data accountability
+- Strengthen evidence-based operational response
 
 ---
 
-### 3. Configure Environment Variables
+# Future Enhancements
 
-* KoboToolbox API credentials
-* PostgreSQL database connection string
-* Google Sheets authentication
-* WhatsApp / SMS API credentials
+Planned roadmap:
 
----
-
-## Operational Impact
-
-This system improves humanitarian response workflows by:
-
-* Reducing reporting delays from days to near real time
-* Improving data consistency and reliability
-* Enabling rapid identification of high-risk households
-* Supporting faster and more targeted intervention decisions
-* Strengthening accountability through structured data storage
+- GIS hotspot vulnerability mapping
+- Predictive food insecurity forecasting
+- Power BI executive dashboards
+- Multi-region deployment scaling
+- Automated anomaly detection
 
 ---
 
-## Author
+# Author
 
-Rajab Bett
-GitHub: [https://github.com/rajab-bett-analytics](https://github.com/rajab-bett-analytics)
-LinkedIn: rajab-bett
-Email: [rajab.bett.data@gmail.com](mailto:rajab.bett.data@gmail.com)
+## Rajab Bett
+
+Data Engineer | Humanitarian Analytics Engineer | Workflow Automation Specialist
+
+**GitHub**  
+https://github.com/rajab-bett-analytics
+
+**LinkedIn**  
+https://www.linkedin.com/in/rajab-bett/
+
+**Email**  
+rajab.bett.data@gmail.com
 
 ---
 
-## License
+# License
 
 MIT License
-
-```
-```
